@@ -1,5 +1,7 @@
-const { parse } = require('csv-parse');
+const { parse } = require('csv-parse/sync'); // Use the supported path
 const fetch = require('node-fetch');
+const moment = require('moment-timezone');
+const { getTomorrowDate, insertSchedule, deleteSchedule } = require('./dbUtils');
 
 module.exports = {
   fetchSchedule: async (pool) => {
@@ -16,26 +18,30 @@ module.exports = {
       return;
     }
 
-    const response = await fetch(attachment.url);
-    const csvText = await response.text();
+    try {
+      const response = await fetch(attachment.url);
+      const csvText = await response.text();
 
-    const usernames = [];
-    parse(csvText, { columns: false, trim: true })
-      .on('data', (row) => usernames.push(row[0]))
-      .on('end', async () => {
-        const tomorrowDate = (await pool.query(
-          "SELECT (CURRENT_DATE AT TIME ZONE 'America/New_York' + INTERVAL '1 day')::date"
-        )).rows[0].date;
+      // Parse the CSV content
+      const usernames = parse(csvText, { columns: false, trim: true })
+        .map(row => row[0]) // Extract the first column (username)
+        .filter(Boolean); // Remove empty rows
 
-        await pool.query("DELETE FROM schedule");
-        for (const username of usernames) {
-          await pool.query(
-            "INSERT INTO schedule (date, username) VALUES ($1, $2)",
-            [tomorrowDate, username]
-          );
-        }
+      if (usernames.length === 0) {
+        await message.channel.send('The CSV file is empty or invalid.');
+        return;
+      }
 
-        await message.channel.send(`Updated schedule for ${tomorrowDate}.`);
-      });
+      const tomorrowDate = moment.tz('America/New_York').add(1, 'day').startOf('day').format('YYYY-MM-DD');
+      await deleteSchedule(pool);
+      await insertSchedule(pool, tomorrowDate, usernames);
+
+      const formattedDate = moment(tomorrowDate).format('ddd MMM D YYYY');
+      await message.channel.send(`Updated schedule for ${formattedDate}.`);
+
+    } catch (error) {
+      console.error('Error updating schedule:', error);
+      await message.channel.send('An error occurred while updating the schedule. Please try again.');
+    }
   },
 };
