@@ -6,6 +6,32 @@ const axios = require('axios');
 const { uploadFile, createFolder } = require('./driveUtils');
 
 /**
+ * Helper function to find or create a folder in Google Drive.
+ * @param {string} folderName - The name of the folder (e.g., '2025-05-04').
+ * @param {string} parentFolderId - The ID of the parent folder.
+ * @returns {string} The ID of the existing or newly created folder.
+ */
+async function findOrCreateFolder(folderName, parentFolderId) {
+  try {
+    // Assume driveUtils provides a way to list folders (e.g., via Google Drive API Files.list)
+    const response = await require('./driveUtils').listFolders({
+      q: `name='${folderName}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    });
+    const folders = response.files || [];
+    if (folders.length > 0) {
+      console.log(`Found existing folder '${folderName}' with ID ${folders[0].id}`);
+      return folders[0].id; // Return the first matching folder's ID
+    }
+    // If no folder exists, create a new one
+    console.log(`Creating new folder '${folderName}' under parent ID ${parentFolderId}`);
+    return await createFolder(folderName, parentFolderId);
+  } catch (error) {
+    console.error(`Error in findOrCreateFolder for '${folderName}':`, error);
+    throw error;
+  }
+}
+
+/**
  * Function to handle the !updateschedule command.
  * This function:
  * 1. Reads usernames from an attached .csv file.
@@ -188,8 +214,8 @@ async function autoUploadPhotos(message) {
       ['image/jpeg', 'image/png'].includes(attachment.contentType)
     );
 
-    if (attachments.size < 4) {
-      console.log(`Not enough photo attachments (${attachments.size} photos, minimum 4 required).`);
+    if (attachments.size <= 4) {
+      console.log(`Not enough photo attachments (${attachments.size} photos, minimum 5 required).`);
       return;
     }
 
@@ -201,15 +227,15 @@ async function autoUploadPhotos(message) {
       .toISOString()
       .split('T')[0]; // Format: YYYY-MM-DD
 
-    // Create a folder for the current date
-    const dailyFolderId = await createFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+    // Find or create a folder for the current date
+    const dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
 
     const userId = message.author.id;
     const userName = message.author.username;
     const userFolderName = `${userName}_${userId}`;
 
     // Create a subfolder for the user if it doesn't exist
-    const userFolderId = await createFolder(userFolderName, dailyFolderId);
+    const userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
 
     for (const attachment of attachments.values()) {
       const fileUrl = attachment.url;
@@ -289,8 +315,8 @@ async function uploadPhotos(channel) {
       .toISOString()
       .split('T')[0]; // Format: YYYY-MM-DD
 
-    // Create a folder for the current date
-    const dailyFolderId = await createFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+    // Find or create a folder for the current date
+    const dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
 
     // Process each photo and upload it to the appropriate user's subfolder
     for (const msg of photoMessages.values()) {
@@ -299,7 +325,7 @@ async function uploadPhotos(channel) {
       const userFolderName = `${userName}_${userId}`;
 
       // Create a subfolder for the user if it doesn't exist
-      const userFolderId = await createFolder(userFolderName, dailyFolderId);
+      const userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
 
       for (const attachment of msg.attachments.values()) {
         const fileUrl = attachment.url; // URL of the photo
