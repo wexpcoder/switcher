@@ -1,7 +1,7 @@
 const { PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { parse } = require('csv-parse'); // Use a CSV parser library for handling CSV files
+const { parse } = require('csv-parse');
 const axios = require('axios');
 const { uploadFile, createFolder } = require('./driveUtils');
 
@@ -42,11 +42,18 @@ async function updateScheduleWithCSV(message, pool) {
     }
 
     const csvFilePath = path.join(tempDir, csvAttachment.name);
-    const response = await fetch(csvAttachment.url);
+
+    // Use axios for downloading the file as a stream
+    const response = await axios({
+      url: csvAttachment.url,
+      method: 'GET',
+      responseType: 'stream', // Ensure the response is a stream
+    });
+
     const fileStream = fs.createWriteStream(csvFilePath);
     await new Promise((resolve, reject) => {
-      response.body.pipe(fileStream);
-      response.body.on("error", reject);
+      response.data.pipe(fileStream);
+      response.data.on("error", reject);
       fileStream.on("finish", resolve);
     });
 
@@ -262,6 +269,84 @@ async function uploadPhotos(channel) {
   }
 }
 
+/**
+ * Function to handle the !assignroles command.
+ * This function:
+ * 1. Removes "RoadWarriors" roles from users without the "Tomorrow" role.
+ * 2. Assigns "RoadWarriors" to users with the "Tomorrow" role and removes their "Tomorrow" roles.
+ * 3. Sends a confirmation with the number of roles cleaned up and assigned.
+ * @param {Object} channel - The Discord channel where the command was invoked.
+ */
+async function assignRoles(channel) {
+  try {
+    console.log('Starting assignRoles');
+    const guild = channel.guild;
+    if (!guild) {
+      console.error('Guild not found');
+      await channel.send('Error: Guild not found.');
+      return;
+    }
+    await guild.members.fetch();
+    const tomorrowRole = guild.roles.cache.find(role => role.name === 'Tomorrow');
+    const roadWarriorsRole = guild.roles.cache.find(role => role.name === 'RoadWarriors');
+    if (!tomorrowRole || !roadWarriorsRole) {
+      await channel.send('Roles not found!');
+      return;
+    }
+
+    console.log('Fetching RoadWarriors members');
+    const roadWarriorsMembers = roadWarriorsRole.members;
+    console.log(`Found ${roadWarriorsMembers.size} RoadWarriors members`);
+    let cleanupCount = 0;
+    for (const member of roadWarriorsMembers.values()) {
+      try {
+        console.log(`Checking ${member.user.tag} for Tomorrow role: ${member.roles.cache.has(tomorrowRole.id)}`);
+        if (!member.roles.cache.has(tomorrowRole.id)) {
+          await member.roles.remove(roadWarriorsRole);
+          cleanupCount++;
+          console.log(`Removed RoadWarriors from ${member.user.tag}`);
+        } else {
+          console.log(`Kept RoadWarriors for ${member.user.tag}: has Tomorrow`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (roleError) {
+        console.error(`Failed to remove RoadWarriors from ${member.user.tag}:`, roleError);
+      }
+    }
+
+    console.log('Fetching Tomorrow members');
+    const tomorrowMembers = tomorrowRole.members;
+    console.log(`Found ${tomorrowMembers.size} Tomorrow members`);
+    if (tomorrowMembers.size === 0) {
+      await channel.send('No users with Tomorrow role found.');
+      return;
+    }
+    let successCount = 0;
+    for (const member of tomorrowMembers.values()) {
+      try {
+        console.log(`Processing ${member.user.tag} with Tomorrow role`);
+        if (!member.roles.cache.has(roadWarriorsRole.id)) {
+          await member.roles.add(roadWarriorsRole);
+          await member.roles.remove(tomorrowRole);
+          successCount++;
+          console.log(`Assigned RoadWarriors to ${member.user.tag}`);
+        } else {
+          await member.roles.remove(tomorrowRole);
+          console.log(`Kept RoadWarriors for ${member.user.tag}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (roleError) {
+        console.error(`Failed to assign/remove roles for ${member.user.tag}:`, roleError);
+      }
+    }
+
+    await channel.send(`Cleaned up ${cleanupCount} RoadWarriors roles. Assigned Road Warriors role to ${successCount} users.`);
+  } catch (error) {
+    console.error('Error in assignRoles:', error);
+    await channel.send(`Error assigning roles: ${error.message}`);
+  }
+}
+
 module.exports = {
   /**
    * Function to handle all commands.
@@ -304,6 +389,14 @@ module.exports = {
       await uploadPhotos(channel);
     }
 
-    // Other commands can be added here...
+    // Command: Assign roles
+    if (content.startsWith('!assignroles')) {
+      console.log("Processing !assignroles command...");
+      if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await channel.send("You do not have permission to use this command.");
+        return;
+      }
+      await assignRoles(channel);
+    }
   },
 };
