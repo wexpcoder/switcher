@@ -178,10 +178,80 @@ async function runSchedule(channel, pool) {
 }
 
 /**
+ * Helper function to upload photos to Google Drive.
+ * @param {Object} message - The Discord message object containing photo attachments.
+ */
+async function autoUploadPhotos(message) {
+  try {
+    const channel = message.channel;
+    const attachments = message.attachments.filter((attachment) =>
+      ['image/jpeg', 'image/png'].includes(attachment.contentType)
+    );
+
+    if (attachments.size < 4) {
+      console.log(`Not enough photo attachments (${attachments.size} photos, minimum 4 required).`);
+      return;
+    }
+
+    // Use the current date logic
+    const now = new Date();
+    const currentDate = new Date(
+      now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+    )
+      .toISOString()
+      .split('T')[0]; // Format: YYYY-MM-DD
+
+    // Create a folder for the current date
+    const dailyFolderId = await createFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+
+    const userId = message.author.id;
+    const userName = message.author.username;
+    const userFolderName = `${userName}_${userId}`;
+
+    // Create a subfolder for the user if it doesn't exist
+    const userFolderId = await createFolder(userFolderName, dailyFolderId);
+
+    for (const attachment of attachments.values()) {
+      const fileUrl = attachment.url;
+      const fileName = attachment.name || 'photo.jpg';
+      const tempDir = path.join(__dirname, 'temp');
+      const filePath = path.join(tempDir, fileName);
+
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir);
+      }
+
+      const response = await axios({
+        url: fileUrl,
+        method: 'GET',
+        responseType: 'stream',
+      });
+
+      const writer = fs.createWriteStream(filePath);
+      response.data.pipe(writer);
+
+      await new Promise((resolve, reject) => {
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+      });
+
+      await uploadFile(filePath, fileName, attachment.contentType, userFolderId);
+
+      fs.unlinkSync(filePath);
+
+      console.log(`Auto-uploaded photo "${fileName}" for user "${userName}" to Google Drive.`);
+    }
+  } catch (error) {
+    console.error('Error in autoUploadPhotos:', error);
+  }
+}
+
+/**
  * Function to handle the !uploadphoto command.
  * This function:
  * 1. Fetches recent messages in the channel.
- * 2. Uploads photo attachments to Google Drive, organizing them into folders by date and username.
+ * 2. Ensures there are 4 or more photo attachments (JPEG or PNG).
+ * 3. Uploads photo attachments to Google Drive, organizing them into folders by date and username.
  * @param {Object} channel - The Discord channel where the command was invoked.
  */
 async function uploadPhotos(channel) {
@@ -197,9 +267,17 @@ async function uploadPhotos(channel) {
       )
     );
 
-    if (photoMessages.size === 0) {
-      console.log('No photos found in the last 50 messages.');
-      await channel.send('No photos found in the last 50 messages.');
+    // Count total photo attachments
+    let totalPhotos = 0;
+    for (const msg of photoMessages.values()) {
+      totalPhotos += msg.attachments.filter((attachment) =>
+        ['image/jpeg', 'image/png'].includes(attachment.contentType)
+      ).size;
+    }
+
+    if (totalPhotos < 4) {
+      console.log(`Not enough photos found (${totalPhotos} photos, minimum 4 required).`);
+      await channel.send(`Not enough photos found (${totalPhotos} photos, minimum 4 required).`);
       return;
     }
 
@@ -368,6 +446,9 @@ module.exports = {
         console.error('Failed to pin message:', error);
       });
     }
+
+    // Automatic photo upload for messages with more than 4 photo attachments
+    await autoUploadPhotos(message);
 
     // Command: Update schedule
     if (content.startsWith('!updateschedule')) {
