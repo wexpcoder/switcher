@@ -56,7 +56,7 @@ async function updateScheduleWithCSV(message, pool) {
     const usernamesToAdd = [];
     await new Promise((resolve, reject) => {
       fs.createReadStream(csvFilePath)
-        .pipe(csvParser())
+        .pipe(parse({ columns: true })) // Use csv-parse with columns enabled
         .on('data', row => {
           if (row.username) {
             usernamesToAdd.push(row.username.trim());
