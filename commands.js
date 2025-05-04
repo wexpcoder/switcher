@@ -361,6 +361,14 @@ module.exports = {
 
     const { content, member, channel } = message;
 
+    // Pin messages starting with "### RTS Reminders"
+    if (content.startsWith("### RTS Reminders")) {
+      console.log('Message starting with "### RTS Reminders" detected. Attempting to pin the message...');
+      message.pin().catch((error) => {
+        console.error('Failed to pin message:', error);
+      });
+    }
+
     // Command: Update schedule
     if (content.startsWith('!updateschedule')) {
       if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
