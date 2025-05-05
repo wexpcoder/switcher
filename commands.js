@@ -29,24 +29,26 @@ async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = fal
   try {
     // Generate a cache key based on folder name and parent ID
     const cacheKey = `${parentFolderId}:${folderName}`;
-    
+
     // Skip cache if force refresh is requested
     if (forceRefresh && folderCache[cacheKey]) {
       console.log(`Force refresh requested for folder '${folderName}', clearing cache entry`);
       delete folderCache[cacheKey];
     }
-    
-    // Check if folder ID is cached and exists
+
+    // Check if folder ID is cached
     if (folderCache[cacheKey]) {
+      console.log(`Found cached folder '${folderName}' with ID ${folderCache[cacheKey]}`);
       try {
+        // Verify the folder exists on Google Drive
         await drive.files.get({
           fileId: folderCache[cacheKey],
-          fields: 'id, trashed',
+          fields: 'id',
         });
-        console.log(`Found cached and existing folder '${folderName}' with ID ${folderCache[cacheKey]}`);
+        console.log(`Verified cached folder '${folderName}' exists with ID ${folderCache[cacheKey]}`);
         return folderCache[cacheKey];
       } catch (error) {
-        console.warn(`Cached folder '${folderName}' with ID ${folderCache[cacheKey]} not found; clearing cache entry`);
+        console.warn(`Cached folder '${folderName}' with ID ${folderCache[cacheKey]} does not exist. Clearing cache entry.`);
         delete folderCache[cacheKey];
       }
     }
@@ -60,86 +62,13 @@ async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = fal
     const folders = response.data.files || [];
     if (folders.length > 0) {
       console.log(`Found existing folder '${folderName}' with ID ${folders[0].id}`);
-      
-      // Verify the folder is accessible
-      try {
-        await drive.files.get({
-          fileId: folders[0].id,
-          fields: 'id',
-        });
-        folderCache[cacheKey] = folders[0].id;
-        return folders[0].id;
-      } catch (accessError) {
-        console.warn(`Found folder '${folderName}' with ID ${folders[0].id} is not accessible; will create a new one`);
-        // Continue to folder creation
-      }
+      folderCache[cacheKey] = folders[0].id;
+      return folders[0].id;
     }
 
     // Create a new folder
     console.log(`Creating new folder '${folderName}' under parent ID ${parentFolderId}`);
-    let folderId;
-    try {
-      folderId = await createFolder(folderName, parentFolderId);
-    } catch (createError) {
-      console.error(`Error creating folder '${folderName}':`, createError);
-      
-      // Check if parent folder exists
-      try {
-        await drive.files.get({
-          fileId: parentFolderId,
-          fields: 'id',
-        });
-      } catch (parentError) {
-        console.error(`Parent folder with ID ${parentFolderId} does not exist or is not accessible`);
-        
-        // If the parent folder is the root folder from environment variable and it's not accessible,
-        // attempt to create a new root folder as fallback
-        if (parentFolderId === process.env.GOOGLE_DRIVE_FOLDER_ID) {
-          console.log(`Attempting to create a new root folder as fallback since configured folder ID is not accessible`);
-          try {
-            // Create a new root folder in Drive root
-            const rootFolderResponse = await drive.files.create({
-              requestBody: {
-                name: 'DiscordBot_Photos',
-                mimeType: 'application/vnd.google-apps.folder',
-              },
-              fields: 'id',
-            });
-            
-            const newRootFolderId = rootFolderResponse.data.id;
-            console.log(`Created new root folder with ID: ${newRootFolderId}. Consider updating GOOGLE_DRIVE_FOLDER_ID env var.`);
-            
-            // Create the requested folder under the new root folder
-            folderId = await createFolder(folderName, newRootFolderId);
-            
-            // Cache the folder ID
-            folderCache[`${newRootFolderId}:${folderName}`] = folderId;
-            return folderId;
-          } catch (rootCreationError) {
-            console.error(`Failed to create fallback root folder:`, rootCreationError);
-          }
-        }
-        
-        throw new Error(`Cannot create folder: parent folder (ID: ${parentFolderId}) is not accessible`);
-      }
-      
-      // If parent exists but creation failed, try again after a short delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      folderId = await createFolder(folderName, parentFolderId);
-    }
-    
-    // Verify the newly created folder is accessible
-    try {
-      await drive.files.get({
-        fileId: folderId,
-        fields: 'id',
-      });
-    } catch (verifyError) {
-      console.error(`Newly created folder '${folderName}' with ID ${folderId} is not accessible:`, verifyError);
-      throw new Error(`Created folder '${folderName}' but it is not accessible`);
-    }
-    
-    // Cache the folder ID only after successful verification
+    const folderId = await createFolder(folderName, parentFolderId);
     folderCache[cacheKey] = folderId;
     return folderId;
   } catch (error) {
