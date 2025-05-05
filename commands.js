@@ -230,30 +230,36 @@ async function runSchedule(channel, pool) {
 
     // Step 4: Evaluate each member with the "Tomorrow" role
     const membersWithTomorrowRole = tomorrowRole.members;
+    let removedCount = 0;
     for (const [memberId, member] of membersWithTomorrowRole) {
       if (!usernamesInTable.includes(member.user.username)) {
         // Remove the "Tomorrow" role if the user is not in the table
         await member.roles.remove(tomorrowRole);
+        removedCount++;
         console.log(`Removed 'Tomorrow' role from ${member.user.username}`);
       }
     }
 
     // Step 5: Assign the "Tomorrow" role to users in the table
+    let assignedCount = 0;
+    let notFoundCount = 0;
     for (const username of usernamesInTable) {
       const member = channel.guild.members.cache.find(m => m.user.username.toLowerCase() === username.toLowerCase());
       if (!member) {
+        notFoundCount++;
         console.log(`User ${username} not found in the guild.`);
         continue; // Skip if the user is not found
       }
 
       if (!member.roles.cache.has(tomorrowRole.id)) {
         await member.roles.add(tomorrowRole);
+        assignedCount++;
         console.log(`Assigned 'Tomorrow' role to ${username}`);
       }
     }
 
-    console.log("Schedule processing complete.");
-    await channel.send("Schedule processing complete.");
+    console.log(`Schedule processing complete. ${assignedCount} users assigned, ${removedCount} users removed, ${notFoundCount} users not found.`);
+    await channel.send(`Process complete! I have added ${assignedCount} drivers for tomorrow. Drivers that were removed from tomorrow who were not on the schedule: ${removedCount}`);
   } catch (error) {
     console.error("Error in runSchedule:", error);
     await channel.send("An error occurred while running the schedule.");
