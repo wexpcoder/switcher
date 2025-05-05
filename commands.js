@@ -8,24 +8,40 @@ const { drive, uploadFile, createFolder } = require('./driveUtils');
 // In-memory cache to store folder IDs
 const folderCache = {};
 
+// Set up periodic cache expiration (every 6 hours)
+setInterval(() => {
+  const cacheSize = Object.keys(folderCache).length;
+  if (cacheSize > 0) {
+    console.log(`Clearing folder cache (${cacheSize} entries) as part of periodic maintenance`);
+    Object.keys(folderCache).forEach(key => delete folderCache[key]);
+  }
+}, 6 * 60 * 60 * 1000);
+
 /**
  * Helper function to find or create a folder in Google Drive.
  * Uses an in-memory cache and Google Drive API to avoid duplicate folders and verify folder existence.
  * @param {string} folderName - The name of the folder (e.g., '2025-05-04' or 'userA_123').
  * @param {string} parentFolderId - The ID of the parent folder.
+ * @param {boolean} forceRefresh - Whether to force a refresh of the folder (ignore cache).
  * @returns {string} The ID of the existing or newly created folder.
  */
-async function findOrCreateFolder(folderName, parentFolderId) {
+async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = false) {
   try {
     // Generate a cache key based on folder name and parent ID
     const cacheKey = `${parentFolderId}:${folderName}`;
+    
+    // Skip cache if force refresh is requested
+    if (forceRefresh && folderCache[cacheKey]) {
+      console.log(`Force refresh requested for folder '${folderName}', clearing cache entry`);
+      delete folderCache[cacheKey];
+    }
     
     // Check if folder ID is cached and exists
     if (folderCache[cacheKey]) {
       try {
         await drive.files.get({
           fileId: folderCache[cacheKey],
-          fields: 'id',
+          fields: 'id, trashed',
         });
         console.log(`Found cached and existing folder '${folderName}' with ID ${folderCache[cacheKey]}`);
         return folderCache[cacheKey];
@@ -365,6 +381,7 @@ async function autoUploadPhotos(message) {
     // Create a subfolder for the user if it doesn't exist
     let userFolderId;
     try {
+      // First try with normal caching
       userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
       
       // Additional verification of user folder
@@ -376,14 +393,10 @@ async function autoUploadPhotos(message) {
     } catch (error) {
       console.error(`Error ensuring user folder exists:`, error);
       
-      // Force recreation of the user folder by clearing cache entry
-      const cacheKey = `${dailyFolderId}:${userFolderName}`;
-      if (folderCache[cacheKey]) {
-        delete folderCache[cacheKey];
-      }
-      
+      // Force refresh and try again
       try {
-        userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+        console.log(`Forcing refresh for user folder '${userFolderName}'`);
+        userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId, true);
         console.log(`Re-created user folder with ID: ${userFolderId}`);
       } catch (retryError) {
         console.error(`Failed to recreate user folder:`, retryError);
@@ -867,6 +880,49 @@ module.exports = {
         console.error("Drive debug error:", error);
         await channel.send(`Error creating debug folder: ${error.message}`);
       }
+    }
+
+    // Command: Clear folder cache
+    if (content.startsWith('!clearcache')) {
+      if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        await channel.send("You need administrator permissions to use this command.");
+        return;
+      }
+      
+      // Clear the folder cache
+      const cacheSize = Object.keys(folderCache).length;
+      Object.keys(folderCache).forEach(key => delete folderCache[key]);
+      
+      await channel.send(`Cleared folder cache (${cacheSize} entries removed). Next uploads will refresh folder information.`);
+      console.log(`Cleared folder cache (${cacheSize} entries).`);
+    }
+
+    // Command: Clear specific user folder from cache
+    if (content.startsWith('!clearusercache')) {
+      if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+        await channel.send("You need manage messages permission to use this command.");
+        return;
+      }
+      
+      // Clear specific user's folder from cache
+      const args = content.split(' ');
+      const username = args.slice(1).join(' ');
+      
+      if (!username) {
+        await channel.send("Please provide a username: `!clearusercache username`");
+        return;
+      }
+      
+      let cleared = 0;
+      Object.keys(folderCache).forEach(key => {
+        if (key.includes(username)) {
+          delete folderCache[key];
+          cleared++;
+        }
+      });
+      
+      await channel.send(`Cleared ${cleared} folder cache entries for user "${username}".`);
+      console.log(`Cleared ${cleared} folder cache entries for user "${username}".`);
     }
   },
 };
