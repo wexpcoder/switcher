@@ -280,7 +280,10 @@ async function runSchedule(channel, pool) {
     const usernamesInTable = result.rows.map(row => row.username);
     console.log(`Usernames found in the table: ${usernamesInTable.join(', ')}`);
 
-    // Step 2: Fetch the "Tomorrow" role
+    // Step 2: Fetch all guild members to ensure the cache is populated
+    await channel.guild.members.fetch();
+
+    // Step 3: Fetch the "Tomorrow" role
     const tomorrowRole = channel.guild.roles.cache.find(role => role.name === "Tomorrow");
     if (!tomorrowRole) {
       console.error("Role 'Tomorrow' does not exist.");
@@ -288,7 +291,7 @@ async function runSchedule(channel, pool) {
       return;
     }
 
-    // Step 3: Evaluate each member with the "Tomorrow" role
+    // Step 4: Evaluate each member with the "Tomorrow" role
     const membersWithTomorrowRole = tomorrowRole.members;
     for (const [memberId, member] of membersWithTomorrowRole) {
       if (!usernamesInTable.includes(member.user.username)) {
@@ -298,9 +301,9 @@ async function runSchedule(channel, pool) {
       }
     }
 
-    // Step 4: Assign the "Tomorrow" role to users in the table
+    // Step 5: Assign the "Tomorrow" role to users in the table
     for (const username of usernamesInTable) {
-      const member = channel.guild.members.cache.find(m => m.user.username === username);
+      const member = channel.guild.members.cache.find(m => m.user.username.toLowerCase() === username.toLowerCase());
       if (!member) {
         console.log(`User ${username} not found in the guild.`);
         continue; // Skip if the user is not found
