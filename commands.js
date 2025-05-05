@@ -14,6 +14,7 @@ setInterval(() => {
   if (cacheSize > 0) {
     console.log(`Clearing folder cache (${cacheSize} entries) as part of periodic maintenance`);
     Object.keys(folderCache).forEach(key => delete folderCache[key]);
+    console.log('Folder cache cleared.');
   }
 }, 6 * 60 * 60 * 1000);
 
@@ -27,7 +28,6 @@ setInterval(() => {
  */
 async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = false) {
   try {
-    // Generate a cache key based on folder name and parent ID
     const cacheKey = `${parentFolderId}:${folderName}`;
 
     // Skip cache if force refresh is requested
@@ -40,15 +40,20 @@ async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = fal
     if (folderCache[cacheKey]) {
       console.log(`Found cached folder '${folderName}' with ID ${folderCache[cacheKey]}`);
       try {
-        // Verify the folder exists on Google Drive
-        await drive.files.get({
+        // Simple verification that folder exists
+        const folderResponse = await drive.files.get({
           fileId: folderCache[cacheKey],
           fields: 'id',
         });
+        
+        if (!folderResponse || !folderResponse.data) {
+          throw new Error('Google Drive API returned an invalid response for cached folder.');
+        }
+        
         console.log(`Verified cached folder '${folderName}' exists with ID ${folderCache[cacheKey]}`);
         return folderCache[cacheKey];
       } catch (error) {
-        console.warn(`Cached folder '${folderName}' with ID ${folderCache[cacheKey]} does not exist. Clearing cache entry.`);
+        console.warn(`Cached folder '${folderName}' with ID ${folderCache[cacheKey]} does not exist or is inaccessible: ${error.message}`);
         delete folderCache[cacheKey];
       }
     }
@@ -59,7 +64,10 @@ async function findOrCreateFolder(folderName, parentFolderId, forceRefresh = fal
       q: `name='${folderName}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       fields: 'files(id)',
     });
-    const folders = response.data.files || [];
+    if (!response || !response.data || !response.data.files) {
+      throw new Error('Google Drive API returned an invalid response for folder search.');
+    }
+    const folders = response.data.files;
     if (folders.length > 0) {
       console.log(`Found existing folder '${folderName}' with ID ${folders[0].id}`);
       folderCache[cacheKey] = folders[0].id;
@@ -258,6 +266,13 @@ async function runSchedule(channel, pool) {
  */
 async function autoUploadPhotos(message) {
   try {
+    // Clear entire folder cache at start of each upload session
+    const cacheCount = Object.keys(folderCache).length;
+    if (cacheCount > 0) {
+      console.log(`Clearing folder cache (${cacheCount} entries) for fresh folder verification`);
+      Object.keys(folderCache).forEach(key => delete folderCache[key]);
+    }
+    
     const channel = message.channel;
     const attachments = message.attachments.filter((attachment) =>
       ['image/jpeg', 'image/png'].includes(attachment.contentType)
@@ -824,6 +839,7 @@ module.exports = {
       // Clear the folder cache
       const cacheSize = Object.keys(folderCache).length;
       Object.keys(folderCache).forEach(key => delete folderCache[key]);
+      console.log('Folder cache cleared.');
       
       await channel.send(`Cleared folder cache (${cacheSize} entries removed). Next uploads will refresh folder information.`);
       console.log(`Cleared folder cache (${cacheSize} entries).`);
@@ -856,5 +872,85 @@ module.exports = {
       await channel.send(`Cleared ${cleared} folder cache entries for user "${username}".`);
       console.log(`Cleared ${cleared} folder cache entries for user "${username}".`);
     }
+
+    // Command: Force reset user folder
+    if (content.startsWith('!forcereset')) {
+      if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+        await channel.send("You need manage messages permission to use this command.");
+        return;
+      }
+      
+      const args = content.split(' ');
+      const username = args.slice(1).join(' ');
+      
+      if (!username) {
+        await channel.send("Please provide a username: `!forcereset username`");
+        return;
+      }
+      
+      // Clear all cache entries for this user
+      let cleared = 0;
+      Object.keys(folderCache).forEach(key => {
+        if (key.includes(username)) {
+          delete folderCache[key];
+          cleared++;
+        }
+      });
+      
+      await channel.send(`Cleared ${cleared} folder cache entries for user "${username}". Their next upload will create fresh folders.`);
+    }
+
+    // Command: Help
+    if (content.startsWith('!help')) {
+      const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator);
+      const canManageRoles = member.permissions.has(PermissionsBitField.Flags.ManageRoles);
+      const canManageMessages = member.permissions.has(PermissionsBitField.Flags.ManageMessages);
+      
+      let helpMessage = "**Available Commands:**\n\n";
+      
+      // Commands for everyone
+      helpMessage += "**General Commands:**\n";
+      helpMessage += "• Upload 4+ photos in a message - Automatically uploads them to Google Drive\n";
+      
+      // Commands for users who can manage messages
+      if (canManageMessages) {
+        helpMessage += "\n**Moderator Commands:**\n";
+        helpMessage += "• `!clearusercache [username]` - Clear a specific user's folder cache\n";
+        helpMessage += "• `!forcereset [username]` - Reset a specific user's folder in the cache\n";
+      }
+      
+      // Commands for users who can manage roles
+      if (canManageRoles) {
+        helpMessage += "\n**Role Management Commands:**\n";
+        helpMessage += "• `!updateschedule` - Update schedule from an attached CSV file\n";
+        helpMessage += "• `!runschedule` - Assign the 'Tomorrow' role based on the schedule\n";
+        helpMessage += "• `!assignroles` - Assign 'RoadWarriors' role to users with 'Tomorrow' role\n";
+      }
+      
+      // Commands for administrators
+      if (isAdmin) {
+        helpMessage += "\n**Administrator Commands:**\n";
+        helpMessage += "• `!clearcache` - Clear the entire folder cache\n";
+        helpMessage += "• `!debugdrive [email]` - Create a debug folder in Google Drive and share it\n";
+      }
+      
+      await channel.send(helpMessage);
+      return;
+    }
   },
 };
+
+async function verifyGoogleDriveFolder() {
+  try {
+    const response = await drive.files.get({
+      fileId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+      fields: 'id, name, permissions',
+    });
+    console.log('Google Drive API response:', response.data);
+  } catch (error) {
+    console.error('Error accessing Google Drive folder:', error);
+  }
+}
+
+// Call the function - but don't await it at the top level
+verifyGoogleDriveFolder();
