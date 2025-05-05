@@ -44,15 +44,86 @@ async function findOrCreateFolder(folderName, parentFolderId) {
     const folders = response.data.files || [];
     if (folders.length > 0) {
       console.log(`Found existing folder '${folderName}' with ID ${folders[0].id}`);
-      folderCache[cacheKey] = folders[0].id;
-      return folders[0].id;
+      
+      // Verify the folder is accessible
+      try {
+        await drive.files.get({
+          fileId: folders[0].id,
+          fields: 'id',
+        });
+        folderCache[cacheKey] = folders[0].id;
+        return folders[0].id;
+      } catch (accessError) {
+        console.warn(`Found folder '${folderName}' with ID ${folders[0].id} is not accessible; will create a new one`);
+        // Continue to folder creation
+      }
     }
 
     // Create a new folder
     console.log(`Creating new folder '${folderName}' under parent ID ${parentFolderId}`);
-    const folderId = await createFolder(folderName, parentFolderId);
+    let folderId;
+    try {
+      folderId = await createFolder(folderName, parentFolderId);
+    } catch (createError) {
+      console.error(`Error creating folder '${folderName}':`, createError);
+      
+      // Check if parent folder exists
+      try {
+        await drive.files.get({
+          fileId: parentFolderId,
+          fields: 'id',
+        });
+      } catch (parentError) {
+        console.error(`Parent folder with ID ${parentFolderId} does not exist or is not accessible`);
+        
+        // If the parent folder is the root folder from environment variable and it's not accessible,
+        // attempt to create a new root folder as fallback
+        if (parentFolderId === process.env.GOOGLE_DRIVE_FOLDER_ID) {
+          console.log(`Attempting to create a new root folder as fallback since configured folder ID is not accessible`);
+          try {
+            // Create a new root folder in Drive root
+            const rootFolderResponse = await drive.files.create({
+              requestBody: {
+                name: 'DiscordBot_Photos',
+                mimeType: 'application/vnd.google-apps.folder',
+              },
+              fields: 'id',
+            });
+            
+            const newRootFolderId = rootFolderResponse.data.id;
+            console.log(`Created new root folder with ID: ${newRootFolderId}. Consider updating GOOGLE_DRIVE_FOLDER_ID env var.`);
+            
+            // Create the requested folder under the new root folder
+            folderId = await createFolder(folderName, newRootFolderId);
+            
+            // Cache the folder ID
+            folderCache[`${newRootFolderId}:${folderName}`] = folderId;
+            return folderId;
+          } catch (rootCreationError) {
+            console.error(`Failed to create fallback root folder:`, rootCreationError);
+          }
+        }
+        
+        throw new Error(`Cannot create folder: parent folder (ID: ${parentFolderId}) is not accessible`);
+      }
+      
+      // If parent exists but creation failed, try again after a short delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      folderId = await createFolder(folderName, parentFolderId);
+    }
     
-    // Cache the folder ID
+    // Verify the newly created folder is accessible
+    try {
+      await drive.files.get({
+        fileId: folderId,
+        fields: 'id',
+      });
+    } catch (verifyError) {
+      console.error(`Newly created folder '${folderName}' with ID ${folderId} is not accessible:`, verifyError);
+      throw new Error(`Created folder '${folderName}' but it is not accessible`);
+    }
+    
+    // Cache the folder ID only after successful verification
     folderCache[cacheKey] = folderId;
     return folderId;
   } catch (error) {
@@ -245,7 +316,20 @@ async function autoUploadPhotos(message) {
     );
 
     if (attachments.size < 4) {
-      console.log(`Not enough photo attachments (${attachments.size} photos, minimum required).`);
+      console.log(`Not enough photo attachments (${attachments.size} photos, minimum 4 required).`);
+      return;
+    }
+
+    // Verify parent folder accessibility
+    try {
+      await drive.files.get({
+        fileId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+        fields: 'id, name, permissions',
+      });
+      console.log(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} is accessible`);
+    } catch (error) {
+      console.error(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} is not accessible:`, error);
+      await channel.send(`Error: Cannot access Google Drive parent folder. Please check GOOGLE_DRIVE_FOLDER_ID.`);
       return;
     }
 
@@ -258,24 +342,58 @@ async function autoUploadPhotos(message) {
       .split('T')[0]; // Format: YYYY-MM-DD
 
     // Find or create a folder for the current date
-    const dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+    let dailyFolderId;
+    try {
+      dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+      
+      // Additional verification of daily folder
+      await drive.files.get({
+        fileId: dailyFolderId,
+        fields: 'id',
+      });
+      console.log(`Successfully verified daily folder with ID: ${dailyFolderId}`);
+    } catch (error) {
+      console.error(`Error ensuring daily folder exists:`, error);
+      await channel.send(`Error: Could not create or access the daily folder. Please try again.`);
+      return;
+    }
 
     const userId = message.author.id;
     const userName = message.author.username;
     const userFolderName = `${userName}_${userId}`;
 
     // Create a subfolder for the user if it doesn't exist
-    const userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
-
-    // Verify parent folder accessibility
+    let userFolderId;
     try {
+      userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+      
+      // Additional verification of user folder
       await drive.files.get({
-        fileId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+        fileId: userFolderId,
         fields: 'id',
       });
+      console.log(`Successfully verified user folder with ID: ${userFolderId}`);
     } catch (error) {
-      console.warn(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} may not be accessible; uploaded files may not be visible`);
+      console.error(`Error ensuring user folder exists:`, error);
+      
+      // Force recreation of the user folder by clearing cache entry
+      const cacheKey = `${dailyFolderId}:${userFolderName}`;
+      if (folderCache[cacheKey]) {
+        delete folderCache[cacheKey];
+      }
+      
+      try {
+        userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+        console.log(`Re-created user folder with ID: ${userFolderId}`);
+      } catch (retryError) {
+        console.error(`Failed to recreate user folder:`, retryError);
+        await channel.send(`Error: Could not create or access your user folder. Please try again.`);
+        return;
+      }
     }
+
+    let successCount = 0;
+    let failureCount = 0;
 
     for (const attachment of attachments.values()) {
       const fileUrl = attachment.url;
@@ -304,14 +422,35 @@ async function autoUploadPhotos(message) {
       let fileId;
       try {
         fileId = await uploadFile(filePath, fileName, attachment.contentType, userFolderId);
+        
+        // Verify the file was actually uploaded
+        await drive.files.get({
+          fileId: fileId,
+          fields: 'id, name',
+        });
+        
+        successCount++;
+        console.log(`Auto-uploaded photo "${fileName}" for user "${userName}" to Google Drive with ID: ${fileId}`);
       } catch (uploadError) {
+        failureCount++;
         console.error(`Failed to upload photo "${fileName}" to folder ID ${userFolderId}:`, uploadError);
-        throw uploadError;
+      } finally {
+        // Clean up the temporary file
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
       }
+    }
 
-      fs.unlinkSync(filePath);
-
-      console.log(`Auto-uploaded photo "${fileName}" for user "${userName}" to Google Drive with ID: ${fileId}`);
+    if (failureCount > 0) {
+      console.log(`Upload summary: ${successCount} photos uploaded successfully, ${failureCount} photos failed.`);
+      if (failureCount === attachments.size) {
+        await channel.send(`Error: Failed to upload all photos. Please try again.`);
+      } else if (successCount > 0) {
+        await channel.send(`Partial success: ${successCount} photos uploaded, ${failureCount} photos failed.`);
+      }
+    } else if (successCount > 0) {
+      console.log(`All ${successCount} photos uploaded successfully.`);
     }
   } catch (error) {
     console.error('Error in autoUploadPhotos:', error);
@@ -330,6 +469,19 @@ async function autoUploadPhotos(message) {
 async function uploadPhotos(channel) {
   console.log('Starting !uploadphoto command...');
   try {
+    // Verify parent folder accessibility
+    try {
+      await drive.files.get({
+        fileId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+        fields: 'id, name, permissions',
+      });
+      console.log(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} is accessible`);
+    } catch (error) {
+      console.error(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} is not accessible:`, error);
+      await channel.send(`Error: Cannot access Google Drive parent folder. Please check GOOGLE_DRIVE_FOLDER_ID.`);
+      return;
+    }
+
     // Fetch the last 50 messages in the channel
     const fetchedMessages = await channel.messages.fetch({ limit: 50 });
 
@@ -362,18 +514,26 @@ async function uploadPhotos(channel) {
       .toISOString()
       .split('T')[0]; // Format: YYYY-MM-DD
 
-    // Find or create a folder for the current date
-    const dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
-
-    // Verify parent folder accessibility
+    // Find or create a folder for the current date with verification
+    let dailyFolderId;
     try {
+      dailyFolderId = await findOrCreateFolder(currentDate, process.env.GOOGLE_DRIVE_FOLDER_ID);
+      
+      // Verify the daily folder exists
       await drive.files.get({
-        fileId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+        fileId: dailyFolderId,
         fields: 'id',
       });
+      console.log(`Successfully verified daily folder with ID: ${dailyFolderId}`);
     } catch (error) {
-      console.warn(`Parent folder ID ${process.env.GOOGLE_DRIVE_FOLDER_ID} may not be accessible; uploaded files may not be visible`);
+      console.error(`Error ensuring daily folder exists:`, error);
+      await channel.send(`Error: Could not create or access the daily folder. Please try again.`);
+      return;
     }
+
+    // Track upload statistics
+    let totalSuccessCount = 0;
+    let totalFailureCount = 0;
 
     // Process each photo and upload it to the appropriate user's subfolder
     for (const msg of photoMessages.values()) {
@@ -381,12 +541,47 @@ async function uploadPhotos(channel) {
       const userName = msg.author.username;
       const userFolderName = `${userName}_${userId}`;
 
-      // Create a subfolder for the user if it doesn't exist
-      const userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+      // Create a subfolder for the user with verification
+      let userFolderId;
+      try {
+        userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+        
+        // Verify the user folder exists
+        await drive.files.get({
+          fileId: userFolderId,
+          fields: 'id',
+        });
+        console.log(`Successfully verified user folder with ID: ${userFolderId}`);
+      } catch (error) {
+        console.error(`Error ensuring user folder exists for ${userName}:`, error);
+        
+        // Force recreation of the user folder by clearing cache entry
+        const cacheKey = `${dailyFolderId}:${userFolderName}`;
+        if (folderCache[cacheKey]) {
+          delete folderCache[cacheKey];
+        }
+        
+        try {
+          userFolderId = await findOrCreateFolder(userFolderName, dailyFolderId);
+          console.log(`Re-created user folder with ID: ${userFolderId}`);
+        } catch (retryError) {
+          console.error(`Failed to recreate user folder for ${userName}:`, retryError);
+          await channel.send(`Error: Could not create or access folder for user ${userName}. Skipping their photos.`);
+          continue; // Skip this user's photos
+        }
+      }
+
+      let userSuccessCount = 0;
+      let userFailureCount = 0;
 
       for (const attachment of msg.attachments.values()) {
-        const fileUrl = attachment.url; // URL of the photo
-        const fileName = attachment.name || 'photo.jpg'; // Default name if none provided
+        // Skip non-image attachments
+        if (!['image/jpeg', 'image/png'].includes(attachment.contentType)) {
+          continue;
+        }
+        
+        const fileUrl = attachment.url;
+        const fileName = attachment.name || 'photo.jpg';
         const tempDir = path.join(__dirname, 'temp');
         const filePath = path.join(tempDir, fileName);
 
@@ -395,41 +590,67 @@ async function uploadPhotos(channel) {
           fs.mkdirSync(tempDir);
         }
 
-        // Download the photo using axios
-        const response = await axios({
-          url: fileUrl,
-          method: 'GET',
-          responseType: 'stream', // Get the response as a stream
-        });
-
-        // Save the file temporarily
-        const writer = fs.createWriteStream(filePath);
-        response.data.pipe(writer);
-
-        // Wait for the file to finish writing
-        await new Promise((resolve, reject) => {
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-
-        // Upload the file to the user's subfolder in Google Drive
-        let fileId;
         try {
-          fileId = await uploadFile(filePath, fileName, attachment.contentType, userFolderId);
-        } catch (uploadError) {
-          console.error(`Failed to upload photo "${fileName}" to folder ID ${userFolderId}:`, uploadError);
-          throw uploadError;
+          // Download the photo using axios
+          const response = await axios({
+            url: fileUrl,
+            method: 'GET',
+            responseType: 'stream',
+          });
+
+          // Save the file temporarily
+          const writer = fs.createWriteStream(filePath);
+          response.data.pipe(writer);
+
+          // Wait for the file to finish writing
+          await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+          });
+
+          // Upload the file to the user's subfolder in Google Drive
+          const fileId = await uploadFile(filePath, fileName, attachment.contentType, userFolderId);
+          
+          // Verify the file was uploaded successfully
+          await drive.files.get({
+            fileId: fileId,
+            fields: 'id, name',
+          });
+          
+          userSuccessCount++;
+          totalSuccessCount++;
+          console.log(`Uploaded photo "${fileName}" for user "${userName}" to Google Drive with ID: ${fileId}`);
+        } catch (error) {
+          userFailureCount++;
+          totalFailureCount++;
+          console.error(`Failed to upload photo "${fileName}" for user "${userName}":`, error);
+        } finally {
+          // Clean up the temporary file
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
         }
+      }
 
-        // Clean up the temporary file
-        fs.unlinkSync(filePath);
-
-        console.log(`Uploaded photo "${fileName}" for user "${userName}" to Google Drive with ID: ${fileId}`);
+      if (userFailureCount > 0) {
+        console.log(`Upload results for ${userName}: ${userSuccessCount} successful, ${userFailureCount} failed`);
       }
     }
 
-    console.log('Photo upload process completed.');
-    await channel.send('Photo upload process completed.');
+    // Report overall results
+    if (totalFailureCount > 0) {
+      if (totalSuccessCount > 0) {
+        await channel.send(`Partial success: ${totalSuccessCount} photos uploaded, ${totalFailureCount} photos failed.`);
+      } else {
+        await channel.send(`Error: Failed to upload all photos. Please try again.`);
+      }
+    } else if (totalSuccessCount > 0) {
+      await channel.send(`Success: All ${totalSuccessCount} photos uploaded successfully.`);
+    } else {
+      await channel.send(`No eligible photos were processed.`);
+    }
+
+    console.log(`Photo upload process completed. Total: ${totalSuccessCount} successful, ${totalFailureCount} failed.`);
   } catch (error) {
     console.error('Error in !uploadphoto command:', error);
     await channel.send(`Error uploading photos: ${error.message}`);
@@ -514,6 +735,49 @@ async function assignRoles(channel) {
   }
 }
 
+/**
+ * Function to create a new root folder and print its ID.
+ * This also shares the folder with the admin email to ensure human access.
+ * @returns {Promise<string>} The ID of the new folder
+ */
+async function createRootDebugFolder(adminEmail) {
+  try {
+    console.log("Creating debug root folder to test Google Drive access");
+    const rootFolderResponse = await drive.files.create({
+      requestBody: {
+        name: 'DiscordBot_Photos_Debug',
+        mimeType: 'application/vnd.google-apps.folder',
+      },
+      fields: 'id',
+    });
+    
+    const newRootFolderId = rootFolderResponse.data.id;
+    console.log(`Successfully created debug root folder with ID: ${newRootFolderId}`);
+    
+    // Share the folder with the admin email
+    try {
+      await drive.permissions.create({
+        fileId: newRootFolderId,
+        requestBody: {
+          role: 'writer',
+          type: 'user',
+          emailAddress: adminEmail
+        }
+      });
+      console.log(`Shared folder with admin email: ${adminEmail}`);
+    } catch (shareError) {
+      console.error(`Failed to share folder with admin: ${shareError.message}`);
+    }
+    
+    console.log(`To fix this issue, update your GOOGLE_DRIVE_FOLDER_ID environment variable to: ${newRootFolderId}`);
+    
+    return newRootFolderId;
+  } catch (error) {
+    console.error("Failed to create debug root folder:", error);
+    throw error;
+  }
+}
+
 module.exports = {
   /**
    * Function to handle all commands.
@@ -575,6 +839,34 @@ module.exports = {
         return;
       }
       await assignRoles(channel);
+    }
+
+    // Command: Debug Google Drive
+    if (content.startsWith('!debugdrive')) {
+      if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+        await channel.send("You need administrator permissions to use this command.");
+        return;
+      }
+      
+      // Get email from command if provided, otherwise use environment variable
+      let adminEmail = process.env.ADMIN_EMAIL;
+      const args = content.split(' ');
+      if (args.length > 1 && args[1].includes('@')) {
+        adminEmail = args[1];
+      }
+      
+      if (!adminEmail) {
+        await channel.send("Please provide an email address to share the folder with: `!debugdrive your-email@example.com`");
+        return;
+      }
+      
+      try {
+        const newFolderId = await createRootDebugFolder(adminEmail);
+        await channel.send(`Created a new root folder in Google Drive with ID: ${newFolderId}\n\nThis folder has been shared with ${adminEmail}.\n\nUpdate your GOOGLE_DRIVE_FOLDER_ID in Heroku environment variables to fix Google Drive access issues.`);
+      } catch (error) {
+        console.error("Drive debug error:", error);
+        await channel.send(`Error creating debug folder: ${error.message}`);
+      }
     }
   },
 };
