@@ -201,7 +201,7 @@ async function updateScheduleWithCSV(message, pool) {
  */
 async function runSchedule(channel, pool) {
   try {
-    console.log("Running schedule...");
+    console.log("Running schedule now.");
 
     // Step 1: Query the database for all usernames
     const query = 'SELECT username FROM schedule';
@@ -931,6 +931,8 @@ module.exports = {
         helpMessage += "• `!updateschedule` - Update schedule from an attached CSV file\n";
         helpMessage += "• `!runschedule` - Assign the 'Tomorrow' role based on the schedule\n";
         helpMessage += "• `!assignroles` - Assign 'RoadWarriors' role to users with 'Tomorrow' role\n";
+        helpMessage += "• `!purgerole [roleName]` - Remove the specified role from all members who have it\n";
+        helpMessage += "• `!confirmpurge [roleName]` - Confirm removal of a role from many members\n";
       }
       
       // Commands for administrators
@@ -943,7 +945,179 @@ module.exports = {
       await channel.send(helpMessage);
       return;
     }
+
+    // Command: Purge role
+    if (content.startsWith('!purgerole')) {
+      // Check permissions (requires Manage Roles permission)
+      if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await channel.send("You need manage roles permission to use this command.");
+        return;
+      }
+      
+      // Get role name from command
+      const args = content.split(' ');
+      const roleName = args.slice(1).join(' ');
+      
+      if (!roleName) {
+        await channel.send("Please provide a role name: `!purgerole RoleName`");
+        return;
+      }
+      
+      try {
+        // Find the role by name
+        const role = channel.guild.roles.cache.find(r => 
+          r.name.toLowerCase() === roleName.toLowerCase()
+        );
+        
+        // Check if the role exists
+        if (!role) {
+          await channel.send(`Error: Role "${roleName}" not found.`);
+          return;
+        }
+        
+        // Get the number of members with this role
+        await channel.guild.members.fetch();
+        const membersWithRole = role.members.size;
+        
+        if (membersWithRole === 0) {
+          await channel.send(`No members have the role "${role.name}".`);
+          return;
+        }
+        
+        // Confirmation message if there are many members
+        if (membersWithRole > 10) {
+          await channel.send(`This will remove the "${role.name}" role from ${membersWithRole} members. Type \`!confirmpurge ${role.name}\` to confirm.`);
+          
+          // Store this in memory for the confirmation command
+          if (!client.pendingPurges) client.pendingPurges = {};
+          
+          client.pendingPurges[channel.id] = {
+            roleId: role.id,
+            roleName: role.name,
+            requesterId: member.id,
+            timestamp: Date.now()
+          };
+          
+          // Set timeout to clear the pending purge after 60 seconds
+          setTimeout(() => {
+            if (client.pendingPurges && client.pendingPurges[channel.id]) {
+              delete client.pendingPurges[channel.id];
+            }
+          }, 60000); // 60 seconds
+          
+          return;
+        }
+        
+        // If fewer than 10 members, proceed directly
+        const message = await channel.send(`Removing role "${role.name}" from ${membersWithRole} members...`);
+        let successCount = 0;
+        let failCount = 0;
+        
+        // Use Promise.all to perform all role removals - Discord.js will handle the rate limiting
+        const removePromises = role.members.map(async (member) => {
+          try {
+            await member.roles.remove(role);
+            successCount++;
+            return true;
+          } catch (error) {
+            console.error(`Failed to remove role from ${member.user.tag}:`, error);
+            failCount++;
+            return false;
+          }
+        });
+        
+        await Promise.all(removePromises);
+        await message.edit(`Completed! Removed role "${role.name}" from ${successCount} members.${failCount > 0 ? ` Failed for ${failCount} members.` : ''}`);
+        
+      } catch (error) {
+        console.error('Error in purge role command:', error);
+        await channel.send(`An error occurred while purging the role: ${error.message}`);
+      }
+    }
+    
+    // Command: Confirm purge
+    if (content.startsWith('!confirmpurge')) {
+      // Check permissions (requires Manage Roles permission)
+      if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await channel.send("You need manage roles permission to use this command.");
+        return;
+      }
+      
+      // Check if there's a pending purge for this channel
+      if (!client.pendingPurges || !client.pendingPurges[channel.id]) {
+        await channel.send("No role purge is pending confirmation in this channel.");
+        return;
+      }
+      
+      const pendingPurge = client.pendingPurges[channel.id];
+      
+      // Check if this is the same user who initiated the purge
+      if (pendingPurge.requesterId !== member.id) {
+        await channel.send("Only the user who initiated the purge can confirm it.");
+        return;
+      }
+      
+      // Check if the confirmation has expired (60 seconds)
+      if (Date.now() - pendingPurge.timestamp > 60000) {
+        await channel.send("The purge confirmation has expired. Please start again with `!purgerole`.");
+        delete client.pendingPurges[channel.id];
+        return;
+      }
+      
+      // Get role name from command
+      const args = content.split(' ');
+      const roleName = args.slice(1).join(' ').toLowerCase();
+      
+      // Check if the confirmation is for the correct role
+      if (pendingPurge.roleName.toLowerCase() !== roleName) {
+        await channel.send(`Confirmation role name doesn't match the pending purge role "${pendingPurge.roleName}".`);
+        return;
+      }
+      
+      try {
+        // Find the role
+        const role = channel.guild.roles.cache.get(pendingPurge.roleId);
+        if (!role) {
+          await channel.send(`Error: Role no longer exists.`);
+          delete client.pendingPurges[channel.id];
+          return;
+        }
+        
+        const membersWithRole = role.members.size;
+        const message = await channel.send(`Removing role "${role.name}" from ${membersWithRole} members...`);
+        
+        let successCount = 0;
+        let failCount = 0;
+        
+        // Use Promise.all to perform all role removals - Discord.js will handle the rate limiting
+        const removePromises = role.members.map(async (member) => {
+          try {
+            await member.roles.remove(role);
+            successCount++;
+            return true;
+          } catch (error) {
+            console.error(`Failed to remove role from ${member.user.tag}:`, error);
+            failCount++;
+            return false;
+          }
+        });
+        
+        await Promise.all(removePromises);
+        await message.edit(`Completed! Removed role "${role.name}" from ${successCount} members.${failCount > 0 ? ` Failed for ${failCount} members.` : ''}`);
+        
+        // Clear the pending purge
+        delete client.pendingPurges[channel.id];
+        
+      } catch (error) {
+        console.error('Error in confirm purge command:', error);
+        await channel.send(`An error occurred while purging the role: ${error.message}`);
+        delete client.pendingPurges[channel.id];
+      }
+    }
   },
+  // Export these functions so they can be used by tasks.js
+  runSchedule,
+  assignRoles
 };
 
 async function verifyGoogleDriveFolder() {
