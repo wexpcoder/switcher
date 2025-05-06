@@ -259,7 +259,7 @@ async function runSchedule(channel, pool) {
     }
 
     console.log(`Schedule processing complete. ${assignedCount} users assigned, ${removedCount} users removed, ${notFoundCount} users not found.`);
-    await channel.send(`Process complete! I have added ${assignedCount} drivers for tomorrow. Drivers that were removed from tomorrow who were not on the schedule: ${removedCount}`);
+    await channel.send(`Success! Added ${assignedCount} drivers for tomorrow. Drivers removed: ${removedCount}`);
   } catch (error) {
     console.error("Error in runSchedule:", error);
     await channel.send("An error occurred while running the schedule.");
@@ -744,6 +744,77 @@ async function createRootDebugFolder(adminEmail) {
   }
 }
 
+/**
+ * Updates channel permissions to add/remove the Tomorrow role
+ * @param {Object} guild - The Discord guild object
+ * @param {string} addToChannelId - Channel ID to add Tomorrow role permissions to
+ * @param {string} removeFromChannelId - Channel ID to remove Tomorrow role permissions from
+ */
+async function updateChannelTomorrowRole(guild, addToChannelId, removeFromChannelId) {
+  try {
+    console.log(`Updating Tomorrow role permissions: adding to ${addToChannelId}, removing from ${removeFromChannelId}`);
+    
+    // Get the Tomorrow role
+    const tomorrowRole = guild.roles.cache.find(role => role.name === "Tomorrow");
+    if (!tomorrowRole) {
+      console.error("Role 'Tomorrow' does not exist.");
+      return {success: false, error: "Role 'Tomorrow' not found"};
+    }
+    
+    let success = true;
+    let error = null;
+    
+    // Add role to the target channel
+    if (addToChannelId) {
+      try {
+        const addToChannel = guild.channels.cache.get(addToChannelId);
+        if (addToChannel) {
+          await addToChannel.permissionOverwrites.create(tomorrowRole, {
+            ViewChannel: true,
+            SendMessages: true
+          });
+          console.log(`Added Tomorrow role permissions to channel: ${addToChannel.name}`);
+        } else {
+          console.error(`Channel with ID ${addToChannelId} not found`);
+          success = false;
+          error = `Channel to add role to (${addToChannelId}) not found`;
+        }
+      } catch (err) {
+        console.error(`Error adding permissions to channel ${addToChannelId}:`, err);
+        success = false;
+        error = `Error adding permissions: ${err.message}`;
+      }
+    }
+    
+    // Remove role from the previous channel
+    if (removeFromChannelId) {
+      try {
+        const removeFromChannel = guild.channels.cache.get(removeFromChannelId);
+        if (removeFromChannel) {
+          const currentOverwrites = removeFromChannel.permissionOverwrites.cache.get(tomorrowRole.id);
+          if (currentOverwrites) {
+            await currentOverwrites.delete();
+            console.log(`Removed Tomorrow role permissions from channel: ${removeFromChannel.name}`);
+          } else {
+            console.log(`Tomorrow role has no permission overwrites in channel: ${removeFromChannel.name}`);
+          }
+        } else {
+          console.error(`Channel with ID ${removeFromChannelId} not found`);
+          // Don't set success to false here as the add operation might have succeeded
+        }
+      } catch (err) {
+        console.error(`Error removing permissions from channel ${removeFromChannelId}:`, err);
+        // Don't set success to false here as the add operation might have succeeded
+      }
+    }
+    
+    return { success, error };
+  } catch (error) {
+    console.error(`Error in updateChannelTomorrowRole:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   /**
    * Function to handle all commands.
@@ -1117,7 +1188,8 @@ module.exports = {
   },
   // Export these functions so they can be used by tasks.js
   runSchedule,
-  assignRoles
+  assignRoles,
+  updateChannelTomorrowRole  // Add this line
 };
 
 async function verifyGoogleDriveFolder() {
