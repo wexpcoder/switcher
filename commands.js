@@ -815,6 +815,75 @@ async function updateChannelTomorrowRole(guild, addToChannelId, removeFromChanne
   }
 }
 
+/**
+ * Updates channel permissions to add/remove the RoadWarriors role
+ * @param {Object} guild - The Discord guild object
+ * @param {string} addToChannelId - Channel ID to add RoadWarriors role permissions to
+ * @param {string} removeFromChannelId - Channel ID to remove RoadWarriors role permissions from
+ */
+async function updateChannelRoadWarriorsRole(guild, addToChannelId, removeFromChannelId) {
+  try {
+    console.log(`Updating RoadWarriors role permissions: adding to ${addToChannelId}, removing from ${removeFromChannelId}`);
+    
+    // Get the RoadWarriors role
+    const roadWarriorsRole = guild.roles.cache.find(role => role.name === "RoadWarriors");
+    if (!roadWarriorsRole) {
+      console.error("Role 'RoadWarriors' does not exist.");
+      return {success: false, error: "Role 'RoadWarriors' not found"};
+    }
+    
+    let success = true;
+    let error = null;
+    
+    // Add role to the target channel
+    if (addToChannelId) {
+      try {
+        const addToChannel = guild.channels.cache.get(addToChannelId);
+        if (addToChannel) {
+          await addToChannel.permissionOverwrites.create(roadWarriorsRole, {
+            ViewChannel: true,
+            SendMessages: true
+          });
+          console.log(`Added RoadWarriors role permissions to channel: ${addToChannel.name}`);
+        } else {
+          console.error(`Channel with ID ${addToChannelId} not found`);
+          success = false;
+          error = `Channel to add role to (${addToChannelId}) not found`;
+        }
+      } catch (err) {
+        console.error(`Error adding permissions to channel ${addToChannelId}:`, err);
+        success = false;
+        error = `Error adding permissions: ${err.message}`;
+      }
+    }
+    
+    // Remove role from the previous channel
+    if (removeFromChannelId) {
+      try {
+        const removeFromChannel = guild.channels.cache.get(removeFromChannelId);
+        if (removeFromChannel) {
+          const currentOverwrites = removeFromChannel.permissionOverwrites.cache.get(roadWarriorsRole.id);
+          if (currentOverwrites) {
+            await currentOverwrites.delete();
+            console.log(`Removed RoadWarriors role permissions from channel: ${removeFromChannel.name}`);
+          } else {
+            console.log(`RoadWarriors role has no permission overwrites in channel: ${removeFromChannel.name}`);
+          }
+        } else {
+          console.error(`Channel with ID ${removeFromChannelId} not found`);
+        }
+      } catch (err) {
+        console.error(`Error removing permissions from channel ${removeFromChannelId}:`, err);
+      }
+    }
+    
+    return { success, error };
+  } catch (error) {
+    console.error(`Error in updateChannelRoadWarriorsRole:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   /**
    * Function to handle all commands.
@@ -1189,7 +1258,8 @@ module.exports = {
   // Export these functions so they can be used by tasks.js
   runSchedule,
   assignRoles,
-  updateChannelTomorrowRole  // Add this line
+  updateChannelTomorrowRole, 
+  updateChannelRoadWarriorsRole
 };
 
 async function verifyGoogleDriveFolder() {

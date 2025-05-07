@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { assignRoles, runSchedule, updateChannelTomorrowRole } = require('./commands');
+const { assignRoles, runSchedule, updateChannelTomorrowRole, updateChannelRoadWarriorsRole } = require('./commands');
 
 module.exports = {
   setupTasks: (client, TASK_CHANNEL_ID, GUILD_ID, pool) => {
@@ -61,6 +61,48 @@ module.exports = {
       }
     }
 
+    // Helper function for RoadWarriors channel updates
+    async function runRoadWarriorsChannelUpdate(dayName, addToChannelId, removeFromChannelId) {
+      console.log(`Running ${dayName} RoadWarriors channel role update`);
+      const guild = client.guilds.cache.get(GUILD_ID);
+      if (!guild) {
+        console.error('Guild not found');
+        return;
+      }
+      
+      // Get the task channel for sending notifications
+      const taskChannel = client.channels.cache.get(TASK_CHANNEL_ID);
+      
+      try {
+        const result = await updateChannelRoadWarriorsRole(
+          guild, 
+          addToChannelId, 
+          removeFromChannelId
+        );
+        
+        if (!result.success) {
+          console.error(`${dayName} RoadWarriors channel role update failed:`, result.error);
+          
+          // Send failure message to task channel
+          if (taskChannel) {
+            await taskChannel.send(`❌ ${dayName} RoadWarriors channel role update failed: ${result.error}`);
+          }
+        } else {
+          // Send success message to task channel
+          if (taskChannel) {
+            await taskChannel.send(`✅ Successfully updated channel permissions: Added RoadWarriors role to ${dayName} channel`);
+          }
+        }
+      } catch (error) {
+        console.error(`Error in ${dayName} RoadWarriors channel update:`, error);
+        
+        // Send error message to task channel
+        if (taskChannel) {
+          await taskChannel.send(`❌ Error in ${dayName} RoadWarriors channel update: ${error.message}`);
+        }
+      }
+    }
+
     // Sunday 7:00 PM EDT (23:00 UTC) - Add to Sunday, remove from Saturday
     cron.schedule('00 23 * * 6', () => runDayChannelUpdate('Sunday', process.env.SUNDAY_CHANNEL_ID, process.env.SATURDAY_CHANNEL_ID));
 
@@ -81,5 +123,26 @@ module.exports = {
 
     // Saturday 7:00 PM EDT (23:00 UTC) - Add to Saturday, remove from Friday
     cron.schedule('00 23 * * 5', () => runDayChannelUpdate('Saturday', process.env.SATURDAY_CHANNEL_ID, process.env.FRIDAY_CHANNEL_ID));
+
+    // Sunday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Sunday, remove from Saturday
+    cron.schedule('05 11 * * 0', () => runRoadWarriorsChannelUpdate('Sunday', process.env.SUNDAY_CHANNEL_ID, process.env.SATURDAY_CHANNEL_ID));
+
+    // Monday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Monday, remove from Sunday
+    cron.schedule('05 11 * * 1', () => runRoadWarriorsChannelUpdate('Monday', process.env.MONDAY_CHANNEL_ID, process.env.SUNDAY_CHANNEL_ID));
+
+    // Tuesday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Tuesday, remove from Monday
+    cron.schedule('05 11 * * 2', () => runRoadWarriorsChannelUpdate('Tuesday', process.env.TUESDAY_CHANNEL_ID, process.env.MONDAY_CHANNEL_ID));
+
+    // Wednesday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Wednesday, remove from Tuesday
+    cron.schedule('05 11 * * 3', () => runRoadWarriorsChannelUpdate('Wednesday', process.env.WEDNESDAY_CHANNEL_ID, process.env.TUESDAY_CHANNEL_ID));
+
+    // Thursday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Thursday, remove from Wednesday
+    cron.schedule('05 11 * * 4', () => runRoadWarriorsChannelUpdate('Thursday', process.env.THURSDAY_CHANNEL_ID, process.env.WEDNESDAY_CHANNEL_ID));
+
+    // Friday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Friday, remove from Thursday
+    cron.schedule('05 11 * * 5', () => runRoadWarriorsChannelUpdate('Friday', process.env.FRIDAY_CHANNEL_ID, process.env.THURSDAY_CHANNEL_ID));
+
+    // Saturday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Saturday, remove from Friday
+    cron.schedule('05 11 * * 6', () => runRoadWarriorsChannelUpdate('Saturday', process.env.SATURDAY_CHANNEL_ID, process.env.FRIDAY_CHANNEL_ID));
   },
 };
