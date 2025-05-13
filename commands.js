@@ -259,7 +259,7 @@ async function runSchedule(channel, pool) {
     }
 
     console.log(`Schedule processing complete. ${assignedCount} users assigned, ${removedCount} users removed, ${notFoundCount} users not found.`);
-    await channel.send(`Success! Added ${assignedCount} drivers for tomorrow. Drivers removed: ${removedCount}`);
+    await channel.send(`✅ Success! Added ${assignedCount} drivers for tomorrow. Drivers removed: ${removedCount}`);
   } catch (error) {
     console.error("Error in runSchedule:", error);
     await channel.send("An error occurred while running the schedule.");
@@ -694,7 +694,7 @@ async function assignRoles(channel) {
       }
     }
 
-    await channel.send(`Cleaned up ${cleanupCount} RoadWarriors roles. Assigned Road Warriors role to ${successCount} users.`);
+    await channel.send(`✅Completed! Removed RoadWarriors role from ${cleanupCount} drivers & assigned to ${successCount} others.`);
   } catch (error) {
     console.error('Error in assignRoles:', error);
     await channel.send(`Error assigning roles: ${error.message}`);
@@ -910,7 +910,7 @@ module.exports = {
     await autoUploadPhotos(message);
 
     // Command: Update schedule
-    if (content.startsWith('!updateschedule')) {
+    if (content.startsWith('!sendschedule')) {
       if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
         await channel.send("You do not have permission to use this command.");
         return;
@@ -1068,7 +1068,7 @@ module.exports = {
       // Commands for users who can manage roles
       if (canManageRoles) {
         helpMessage += "\n**Role Management Commands:**\n";
-        helpMessage += "• `!updateschedule` - Update schedule from an attached CSV file\n";
+        helpMessage += "• `!sendschedule` - Update schedule from an attached CSV file\n";
         helpMessage += "• `!runschedule` - Assign the 'Tomorrow' role based on the schedule\n";
         helpMessage += "• `!assignroles` - Assign 'RoadWarriors' role to users with 'Tomorrow' role\n";
         helpMessage += "• `!purgerole [roleName]` - Remove the specified role from all members who have it\n";

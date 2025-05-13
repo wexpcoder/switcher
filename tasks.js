@@ -4,7 +4,7 @@ const { assignRoles, runSchedule, updateChannelTomorrowRole, updateChannelRoadWa
 module.exports = {
   setupTasks: (client, TASK_CHANNEL_ID, GUILD_ID, pool) => {
     // 7:00 PM EDT task (11:00 PM UTC)
-    cron.schedule('30 22 * * *', async () => {
+    cron.schedule('30 23 * * *', async () => {
       console.log('Running 7:00 PM EDT runSchedule task');
       const channel = client.channels.cache.get(TASK_CHANNEL_ID);
       if (!channel) return console.error('Task channel not found');
@@ -12,7 +12,7 @@ module.exports = {
     });
 
     // 7:00 AM EDT task (11:00 AM UTC)
-    cron.schedule('00 11 * * *', async () => {
+    cron.schedule('00 05 * * *', async () => {
       console.log('Running 7:00 AM EDT assignRoles task');
       const channel = client.channels.cache.get(TASK_CHANNEL_ID);
       if (!channel) return console.error('Task channel not found');
@@ -125,24 +125,24 @@ module.exports = {
     cron.schedule('00 23 * * 5', () => runDayChannelUpdate('Saturday', process.env.SATURDAY_CHANNEL_ID, process.env.FRIDAY_CHANNEL_ID));
 
     // Sunday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Sunday, remove from Saturday
-    cron.schedule('05 11 * * 0', () => runRoadWarriorsChannelUpdate('Sunday', process.env.SUNDAY_CHANNEL_ID, process.env.SATURDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 0', () => runRoadWarriorsChannelUpdate('Sunday', process.env.SUNDAY_CHANNEL_ID, process.env.SATURDAY_CHANNEL_ID));
 
     // Monday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Monday, remove from Sunday
-    cron.schedule('05 11 * * 1', () => runRoadWarriorsChannelUpdate('Monday', process.env.MONDAY_CHANNEL_ID, process.env.SUNDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 1', () => runRoadWarriorsChannelUpdate('Monday', process.env.MONDAY_CHANNEL_ID, process.env.SUNDAY_CHANNEL_ID));
 
     // Tuesday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Tuesday, remove from Monday
-    cron.schedule('05 11 * * 2', () => runRoadWarriorsChannelUpdate('Tuesday', process.env.TUESDAY_CHANNEL_ID, process.env.MONDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 2', () => runRoadWarriorsChannelUpdate('Tuesday', process.env.TUESDAY_CHANNEL_ID, process.env.MONDAY_CHANNEL_ID));
 
     // Wednesday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Wednesday, remove from Tuesday
-    cron.schedule('05 11 * * 3', () => runRoadWarriorsChannelUpdate('Wednesday', process.env.WEDNESDAY_CHANNEL_ID, process.env.TUESDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 3', () => runRoadWarriorsChannelUpdate('Wednesday', process.env.WEDNESDAY_CHANNEL_ID, process.env.TUESDAY_CHANNEL_ID));
 
     // Thursday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Thursday, remove from Wednesday
-    cron.schedule('05 11 * * 4', () => runRoadWarriorsChannelUpdate('Thursday', process.env.THURSDAY_CHANNEL_ID, process.env.WEDNESDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 4', () => runRoadWarriorsChannelUpdate('Thursday', process.env.THURSDAY_CHANNEL_ID, process.env.WEDNESDAY_CHANNEL_ID));
 
     // Friday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Friday, remove from Thursday
-    cron.schedule('05 11 * * 5', () => runRoadWarriorsChannelUpdate('Friday', process.env.FRIDAY_CHANNEL_ID, process.env.THURSDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 5', () => runRoadWarriorsChannelUpdate('Friday', process.env.FRIDAY_CHANNEL_ID, process.env.THURSDAY_CHANNEL_ID));
 
     // Saturday 7:30 AM EDT (11:30 AM UTC) - Add RoadWarriors to Saturday, remove from Friday
-    cron.schedule('05 11 * * 6', () => runRoadWarriorsChannelUpdate('Saturday', process.env.SATURDAY_CHANNEL_ID, process.env.FRIDAY_CHANNEL_ID));
+    cron.schedule('05 05 * * 6', () => runRoadWarriorsChannelUpdate('Saturday', process.env.SATURDAY_CHANNEL_ID, process.env.FRIDAY_CHANNEL_ID));
   },
 };
