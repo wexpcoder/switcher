@@ -1,7 +1,8 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { handleCommand } = require('./commands');
+const { handleCommand, handleRescueMessage } = require('./commands');
 const { setupTasks } = require('./tasks');
 const { createPool } = require('./database');
+
 
 require('dotenv').config();
 
@@ -25,8 +26,13 @@ client.on('ready', () => {
   setupTasks(client, TASK_CHANNEL_ID, GUILD_ID, pool);
 });
 
-client.on('messageCreate', (message) => {
+// Combined message event listener
+client.on('messageCreate', async (message) => {
+  // Handle commands
   handleCommand(message, client, pool, channelMap, RTS_BOT_ID);
+  
+  // Handle rescue messages
+  await handleRescueMessage(message);
 });
 
 client.login(process.env.DISCORD_TOKEN);

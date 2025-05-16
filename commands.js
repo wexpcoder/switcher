@@ -884,6 +884,114 @@ async function updateChannelRoadWarriorsRole(guild, addToChannelId, removeFromCh
   }
 }
 
+/**
+ * Function to forward rescue messages to a Chime webhook.
+ * Only processes messages from users with the "dispatch" role that start with "*rescue".
+ * @param {Object} message - The Discord message object.
+ */
+async function handleRescueMessage(message) {
+  try {
+    // Skip messages from bots to avoid potential loops
+    if (message.author.bot) return;
+    
+    // Check if message starts with "*rescue" (case-insensitive)
+    if (message.content.toLowerCase().startsWith('*rescue')) {
+      // Check if user has the dispatch role
+      const member = message.member;
+      if (!member) return; // Skip if not in a guild
+      
+      const hasDispatchRole = member.roles.cache.some(role => 
+        role.name.toLowerCase() === 'dispatch'
+      );
+      
+      // Only proceed if user has the dispatch role
+      if (!hasDispatchRole) {
+        console.log(`Ignoring rescue message from ${message.author.username} - no dispatch role`);
+        return;
+      }
+      
+      console.log(`Detected rescue message from dispatcher ${message.author.username} in ${message.channel.name}`);
+      
+      // Get Chime webhook URL from environment variables
+      const chimeWebhookUrl = process.env.CHIME_WEBHOOK_URL;
+      if (!chimeWebhookUrl) {
+        console.error('CHIME_WEBHOOK_URL not set in environment variables');
+        return;
+      }
+      
+      // Extract the actual message content by removing the "*rescue" prefix
+      const commandIndex = message.content.toLowerCase().indexOf('*rescue');
+      let actualMessage = message.content.substring(commandIndex + 7).trim();
+      
+      // Process user mentions in the message
+      // User mentions format: <@USER_ID> or <@!USER_ID>
+      const mentionRegex = /<@!?(\d+)>/g;
+      const mentionMatches = [...actualMessage.matchAll(mentionRegex)];
+      
+      if (mentionMatches.length > 0) {
+        console.log(`Found ${mentionMatches.length} user mentions in the message`);
+        
+        // Replace each mention with the user's display name
+        for (const match of mentionMatches) {
+          const userId = match[1];
+          try {
+            // Fetch the user if they're not already in the cache
+            const user = await message.client.users.fetch(userId);
+            
+            // Try to get their guild member to get the display name
+            let displayName = user.username; // Default to username
+            try {
+              const guildMember = await message.guild.members.fetch(userId);
+              if (guildMember && guildMember.displayName) {
+                displayName = guildMember.displayName;
+              }
+            } catch (memberErr) {
+              console.log(`Couldn't fetch member for user ${userId}: ${memberErr.message}`);
+            }
+            
+            // Replace the mention with the display name
+            actualMessage = actualMessage.replace(match[0], `@${displayName}`);
+            console.log(`Replaced user mention ${match[0]} with @${displayName}`);
+          } catch (userError) {
+            console.error(`Failed to fetch user ${userId}: ${userError.message}`);
+            // Replace with a generic name if we can't fetch the user
+            actualMessage = actualMessage.replace(match[0], `@Unknown User`);
+          }
+        }
+      }
+      
+      // Create message for Chime
+      const serverName = message.guild ? message.guild.name : 'Unknown Server';
+      const channelName = message.channel ? message.channel.name : 'Unknown Channel';
+      const attachmentUrls = Array.from(message.attachments.values())
+        .map(attachment => attachment.url)
+        .join('\n');
+      
+      // Use member.displayName instead of message.author.username for the sender name
+      const senderName = member.displayName || message.author.username;
+      
+      const chimeMessage = {
+        Content: `/md **RESCUE PLAN** \n\n**From:** ${senderName} (Dispatcher)\n**Message:** ${actualMessage}\n${attachmentUrls ? `\n**Attachments:**\n${attachmentUrls}` : ''}`
+      };
+      
+      // Send to Chime webhook
+      const response = await axios.post(chimeWebhookUrl, chimeMessage);
+      
+      if (response.status === 200) {
+        console.log('Successfully forwarded rescue message to Chime');
+        // Optionally react to the message to indicate it was forwarded
+        await message.react('📨');
+        // Reply to the message to confirm it was forwarded
+        //await message.reply("Rescue plan sent to Amazon team.");
+      } else {
+        console.error('Failed to forward message to Chime:', response.status);
+      }
+    }
+  } catch (error) {
+    console.error('Error handling rescue message:', error);
+  }
+}
+
 module.exports = {
   /**
    * Function to handle all commands.
@@ -1259,7 +1367,8 @@ module.exports = {
   runSchedule,
   assignRoles,
   updateChannelTomorrowRole, 
-  updateChannelRoadWarriorsRole
+  updateChannelRoadWarriorsRole,
+  handleRescueMessage
 };
 
 async function verifyGoogleDriveFolder() {
