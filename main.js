@@ -33,6 +33,25 @@ client.on('messageCreate', async (message) => {
   
   // Handle rescue messages
   await handleRescueMessage(message);
+  
+  // Pin any message starting with "### RTS Reminders" (from any user or bot)
+  if (message.content.startsWith("### RTS Reminders")) {
+    try {
+      console.log(`Attempting to pin message starting with "### RTS Reminders" from ${message.author.username}`);
+      await message.pin();
+      console.log('Successfully pinned the message');
+    } catch (error) {
+      console.error('Failed to pin message:', error);
+      // Add detailed error logging
+      if (error.code === 30003) {
+        console.error('Max pins reached (50)');
+      } else if (error.code === 50013) {
+        console.error('Missing permissions to pin messages');
+      } else {
+        console.error(`Error code: ${error.code}, Message: ${error.message}`);
+      }
+    }
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);

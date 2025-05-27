@@ -1009,9 +1009,22 @@ module.exports = {
     // Pin messages starting with "### RTS Reminders"
     if (content.startsWith("### RTS Reminders")) {
       console.log('Message starting with "### RTS Reminders" detected. Attempting to pin the message...');
-      message.pin().catch((error) => {
+      try {
+        await message.pin();
+        console.log('Successfully pinned RTS Reminders message');
+      } catch (error) {
         console.error('Failed to pin message:', error);
-      });
+        // Optionally inform the channel about the error
+        if (error.code === 30003) {
+          // Max pins reached (50)
+          await channel.send("Unable to pin message: Maximum number of pins reached (50). Please unpin some messages first.");
+        } else if (error.code === 50013) {
+          // Missing permissions
+          await channel.send("Unable to pin message: Bot lacks permission to manage pins.");
+        } else {
+          await channel.send(`Unable to pin message: ${error.message}`);
+        }
+      }
     }
 
     // Automatic photo upload for messages with more than 4 photo attachments
